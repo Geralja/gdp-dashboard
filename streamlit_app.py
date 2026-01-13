@@ -1,151 +1,118 @@
 import streamlit as st
-import pandas as pd
-import math
-from pathlib import Path
+import firebase_admin
+from firebase_admin import credentials, firestore
+import base64
+import re
+import time
+from PIL import Image
+import io
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# 1. CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="GeralJá IA", layout="wide", page_icon="🚀")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# 2. INICIALIZAÇÃO DO FIREBASE (Protegida)
+if not firebase_admin._apps:
+    try:
+        # Tente carregar dos Secrets do Streamlit
+        cred_dict = json.loads(st.secrets["textkey"])
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred)
+    except:
+        # Se falhar (rodando local), busca arquivo local
+        cred = credentials.Certificate("serviceAccountKey.json")
+        firebase_admin.initialize_app(cred)
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+db = firestore.client()
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# 3. CLASSE IA MESTRE (Processamento de Imagens e Dados)
+class IAMestre:
+    @staticmethod
+    def otimizar_imagem(file):
+        """Reduz peso para caber no limite de 1MB do Firestore"""
+        if file is None: return None
+        try:
+            img = Image.open(file)
+            if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+            img.thumbnail((600, 600))
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=60, optimize=True)
+            return base64.b64encode(buffer.getvalue()).decode()
+        except: return None
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    @staticmethod
+    def limpar_tel(tel):
+        return re.sub(r'\D', '', str(tel or ""))
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# 4. VARIÁVEIS GLOBAIS
+CATEGORIAS = ["Eletricista", "Encanador", "Limpeza", "Pintor", "Mecânico", "Outros"]
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+# ==============================================================================
+# INTERFACE PRINCIPAL
+# ==============================================================================
+st.title("🚀 GeralJá - Versão Piloto IA")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+menu_abas = st.tabs(["🔍 BUSCAR", "📢 MEU PERFIL", "⚙️ ADMIN"])
 
-    return gdp_df
+# ------------------------------------------------------------------------------
+# ABA 1: BUSCA (Onde a mágica acontece)
+# ------------------------------------------------------------------------------
+with menu_abas[0]:
+    busca = st.text_input("O que você procura hoje?", placeholder="Ex: encanador no centro...")
+    
+    # Aqui entrará a lógica de Geolocalização e Rank de Moedas
+    st.info("Aguardando lógica de proximidade...")
 
-gdp_df = get_gdp_data()
+# ------------------------------------------------------------------------------
+# ABA 2: MEU PERFIL (Sua Vitrine com 4 Fotos)
+# ------------------------------------------------------------------------------
+with menu_abas[1]:
+    if 'auth' not in st.session_state: st.session_state.auth = False
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    if not st.session_state.auth:
+        col_l1, col_l2 = st.columns([1,1])
+        with col_l1:
+            st.subheader("🔑 Acesso ao Parceiro")
+            l_zap = st.text_input("WhatsApp", key="login_zap")
+            l_pass = st.text_input("Senha", type="password")
+            if st.button("ENTRAR"):
+                # Lógica de login simples
+                tel = IAMestre.limpar_tel(l_zap)
+                doc = db.collection("profissionais").document(tel).get()
+                if doc.exists and str(doc.to_dict().get('senha')) == l_pass:
+                    st.session_state.auth = True
+                    st.session_state.user_id = tel
+                    st.rerun()
+                else: st.error("Erro de acesso.")
+        with col_l2:
+            st.subheader("📝 Quero me Cadastrar")
+            if st.button("Ir para Cadastro"): st.info("Link para formulário")
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    else:
+        # ÁREA DO PARCEIRO LOGADO
+        uid = st.session_state.user_id
+        dados = db.collection("profissionais").document(uid).get().to_dict()
+        
+        sub_tab1, sub_tab2 = st.tabs(["📊 Painel", "🛠️ Editar Vitrine"])
+        
+        with sub_tab2:
+            with st.form("edit_form"):
+                st.write("### Editar Minhas Fotos e Dados")
+                f1, f2 = st.columns(2)
+                up1 = f1.file_uploader("Foto 1", type=['jpg','png'], key="f1")
+                up2 = f1.file_uploader("Foto 2", type=['jpg','png'], key="f2")
+                up3 = f2.file_uploader("Foto 3", type=['jpg','png'], key="f3")
+                up4 = f2.file_uploader("Foto 4", type=['jpg','png'], key="f4")
+                
+                desc = st.text_area("Descrição", value=dados.get('descricao', ''))
+                
+                if st.form_submit_button("SALVAR"):
+                    # Processar e Salvar
+                    st.success("Dados enviados para IA...")
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# ------------------------------------------------------------------------------
+# ABA 3: ADMIN
+# ------------------------------------------------------------------------------
+with menu_abas[2]:
+    pass_adm = st.text_input("Chave Mestra", type="password")
+    if pass_adm == "admin123":
+        st.write("Painel de Controle Ativo")
