@@ -6,3 +6,4 @@ import re
 import time
 from PIL import Image
 import io
+pillow
