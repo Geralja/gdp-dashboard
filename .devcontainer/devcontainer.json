@@ -1,7 +1,0 @@
-textkey = '''
-{
-  "type": "service_account",
-  "project_id": "teu-projeto",
-  ... (restante do json)
-}
-'''
